@@ -6,7 +6,8 @@ output_name=$2 # full path to desired output location
 from=$3 # current reference of file (use hg terminology)
 to=${4^} # desired reference (with capitalized first letter)
 
-chain_directory=/home/sjensen/liftover_chain_files #/geschwindlabshares/HumanGenotypeArray/scripts/liftOver
+code_directory=$(dirname $0)
+chain_directory=${code_directory}/liftover_chain_files #in order to use this function there must be a folder with the desired chain files in the same directory as this script
 liftOver=/geschwindlabshares/HumanGenotypeArray/scripts/liftOver/liftOver
 
 chain_file=${chain_directory}/${from}To${to}.over.chain

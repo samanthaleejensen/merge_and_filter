@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Get merged plink file for chosen individuals in given Plink datasets
-# Samantha Jensen 2019-05-08 updated 2019-09-13 
-# (original is /home/sjensen/ACE_841/merge_and_filter.sh)
+# Samantha Jensen 2020-08-02
+# Updated from Orion script written in 2019-05-08 to be agnostic to server. 
 
 exit_on_error() {
     exit_code=$1
@@ -13,8 +13,12 @@ exit_on_error() {
     fi
 }
 
+#############################################################
+
+# define script usage
+
 usage_statement="---------------------------------------------------------------------------------------------------------------------
-Usage: $(basename $0) --output_directory PATH --output_name STRING --sample_info FILE --datasets_file FILE --snp_names FILE [--reference_dataset STRING] [--build STRING] [--maf [VALUE]] [--geno [VALUE]] [--hwe [VALUE]] [--mind [VALUE]] 
+Usage: $(basename $0) --output_directory PATH --output_name STRING --sample_info FILE --datasets_file FILE --snp_names FILE [--reference_dataset STRING] [--build STRING] [--maf [VALUE]] [--geno [VALUE]] [--hwe [VALUE]] [--mind [VALUE]] [--plink PATH] 
        $(basename $0) --help
 
  -o, --output_directory		Directory all output will be written to. Will be created if doesn't exist.
@@ -53,6 +57,9 @@ Usage: $(basename $0) --output_directory PATH --output_name STRING --sample_info
  -i, --mind			Individual missingness threshold. Will be passed to Plink to filter any individuals
 				with missing genotypes for more than this proportion of variants. (Optional)
 
+ --plink			Set path to plink executable. If not set, script will assume plink is in the path.
+				(Optional)
+
 -h, --help			Display this help message.
 
 NOTE: Order of parameters does not matter.
@@ -60,9 +67,24 @@ NOTE: Order of parameters does not matter.
 
 #############################################################
 
+# setting constants
+
+plink=$(type -P plink) # this variable will be used to call Plink and should be modified with the --plink flag if the executable is not in your $PATH
+if [[ $plink == "" ]]; then
+	echo ""
+	echo "WARNING: The Plink executable is not in your path. You must set the location of Plink with the --plink flag."
+	echo ""
+fi
+
+code_directory=$(dirname $0) # supporting scripts must be in the same directory as this script
+find_complementary_flips="${code_directory}/find_complementary_flips.R"
+convert_reference="${code_directory}/convert_reference.sh"
+
+#############################################################
+
 # using getopt to parse arguments
 
-options=`getopt --options o:n:s:d:f:r:b:m:g:p:i:h --long output_directory:,output_name:,sample_info:,datasets_file:,snp_names:,reference_dataset:,build:,maf:,geno:,hwe:,mind:,help -n 'merge_and_filter.sh' -- "$@"`
+options=`getopt --options o:n:s:d:f:r:b:m:g:p:i:h --long output_directory:,output_name:,sample_info:,datasets_file:,snp_names:,reference_dataset:,build:,maf:,geno:,hwe:,mind:,plink:,help -n 'merge_and_filter.sh' -- "$@"`
 
 eval set -- "$options"
 
@@ -79,19 +101,12 @@ for argument in $options ; do
 		-g|--geno) geno=$2; shift 2 ;;
 		-p|--hwe) hwe=$2; shift 2 ;;
 		-i|--mind) mind=$2; shift 2 ;;
+		--plink) plink=$2; shift 2 ;;
 		-h|--help) echo "$usage_statement"; exit 0 ;;
 		--) shift ; break ;;
 		*) echo "ERROR: Argument parsing failed! Check getopt usage to see if it has changed." ; exit 1 ;;
 	esac
 done
-
-#############################################################
-
-# setting constants
-
-plink=/share/apps/plink-1.9-beta3c/plink
-find_complementary_flips="/home/sjensen/find_complementary_flips.R"
-convert_reference="/home/sjensen/convert_reference.sh"
 
 #############################################################
 
