@@ -8,11 +8,11 @@ to=${4^} # desired reference (with capitalized first letter)
 
 code_directory=$(dirname $0)
 chain_directory=${code_directory}/liftover_chain_files #in order to use this function there must be a folder with the desired chain files in the same directory as this script
-liftOver=/geschwindlabshares/HumanGenotypeArray/scripts/liftOver/liftOver
+liftOver=${code_directory}/liftOver # the functioning binary for UCSC's liftOver must also be in the same directory
 
 chain_file=${chain_directory}/${from}To${to}.over.chain
 
-plink=/share/apps/plink-1.9-beta3c/plink
+plink=$5
 
 if [ -f $chain_file ]; then
 	echo "Using ${chain_file} as chain file for conversion."

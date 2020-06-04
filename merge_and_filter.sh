@@ -242,7 +242,7 @@ do
 				echo "Converting $dataset_name from $dataset_build to reference build ${build}."
 				echo ""
 
-				$convert_reference $dataset_file ${dataset_name} $dataset_build $build
+				$convert_reference $dataset_file ${dataset_name} $dataset_build $build $plink
 				exit_on_error $? convert_reference
 			fi
 		else
