@@ -1,9 +1,0 @@
-2017-9154 /geschwindlabshares/HumanGenotypeArray/AGRE.ILMN.Omni/2017-9154/plinkable.HM_fwd/2017-9154_DGACE_merge_clean190118 hg19
-2016-9174-3 /geschwindlabshares/HumanGenotypeArray/AGRE.ILMN.Omni/2016-9174-3/plinkable.HM.fwd/2016-9174-3_clean190123.DGACE hg19
-2016-9174 /geschwindlabshares/HumanGenotypeArray/AGRE.ILMN.Omni/2016-9174/plinkable.HM.fwd/2016-9174_clean190123 hg19
-2015-9017 /geschwindlabshares/HumanGenotypeArray/AGRE.ILMN.Omni/2015-9017/plinkable.HM_fwd/2015-9017.clean170906.AGRE hg19
-2013-111A /geschwindlabshares/HumanGenotypeArray/AGRE.ILMN.Omni/2013-111A.reclustered/plinkable.HM.fwd/2013-111A.clean170906 hg19
-2010-002 /geschwindlabshares/HumanGenotypeArray/AGRE.ILMN.Omni/2010-002.reclustered/plinkable.HM.fwd/2010-002.clean101007 hg18
-CHOP /geschwindlabshares/HumanGenotypeArray/AGRE.Illumina.550k/plinkable/clean100725/CHOP.clean100725 hg18
-2012-092 /geschwindlabshares/HumanGenotypeArray/AGRE.ILMN.Omni/2012-092.reclustered/plinkable.HM.fwd/2012-092.clean140430 hg19
-2013-438 /home/sjensen/AGRE_2632/reformatted_2013-438/2013-438_AGRE hg19

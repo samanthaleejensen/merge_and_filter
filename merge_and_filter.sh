@@ -384,11 +384,14 @@ do
 		echo "Generating a reference for all $(wc -l ${unique_name}.bim) SNPs genotyped in ${dataset_name} using reference file ${snp_names}."
 		echo ""
 
-		snp_positions=${dataset_name}_snp_positions.txt
-		awk '{print $1"\t"$4"\t"}' ${unique_name}.bim > ${snp_positions}
-		#awk '{print $1"\t"$2"\t"$4"\t"$5"\t"$6}' ${unique_name}.bim > ${dataset_name}_snps.txt
-		matching_snps="${dataset_name}_${build}_matching_snps.txt"
-		grep -F -f $snp_positions $snp_names > $matching_snps
+		#batch_snps=${dataset_name}_snps.txt
+		#awk '{print $1"\t"$4"\t"$2"\t"$5"\t"$6}' ${unique_name}.bim > ${dataset_name}_snps.txt
+		
+		#snp_positions=${dataset_name}_snp_positions.txt
+		#awk '{print $1"\t"$2"\t"}' $batch_snps > ${snp_positions}
+		
+		#matching_snps="${dataset_name}_${build}_matching_snps.txt"
+		#grep -F -f $snp_positions $snp_names > $matching_snps
 		#TODO: process matching snps and get correct names and alleles
 	else
 		echo "Reference file ${batch_names} already exists. We will use this to rename all variants in ${dataset_name}."
