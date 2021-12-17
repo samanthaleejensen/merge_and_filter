@@ -18,7 +18,7 @@ exit_on_error() {
 # define script usage
 
 usage_statement="---------------------------------------------------------------------------------------------------------------------
-Usage: $(basename $0) --output_directory PATH --output_name STRING --sample_info FILE --datasets_file FILE --snp_names FILE [--reference_dataset STRING] [--build STRING] [--maf [VALUE]] [--geno [VALUE]] [--hwe [VALUE]] [--mind [VALUE]] [--plink PATH] 
+Usage: $(basename $0) --output_directory PATH --output_name STRING --sample_info FILE --datasets_file FILE --snp_names FILE [--reference_dataset STRING] [--build STRING] [--maf [VALUE]] [--geno [VALUE]] [--hwe [VALUE]] [--mind [VALUE]] [--plink PATH] [--rscript PATH] 
        $(basename $0) --help
 
  -o, --output_directory		Directory all output will be written to. Will be created if doesn't exist.
@@ -35,7 +35,7 @@ Usage: $(basename $0) --output_directory PATH --output_name STRING --sample_info
  
  -f, --snp_names		Absolute path to a file with \"chromosome position rsid reference alternate\" for 
 				standardizing SNP naming conventions. See documentation on Hoffman2 (in 
-				/u/home/s/samlj/project-geschwind/ACE/genotypes/orion_code/get_dbsnp_names/) 
+				/u/home/s/samlj/project-geschwind/ACE/genotypes/get_dbsnp_names/) 
 				for information on how to generate these files. The positions must be aligned to
 				to the desired reference build.
 
@@ -60,6 +60,9 @@ Usage: $(basename $0) --output_directory PATH --output_name STRING --sample_info
  --plink			Set path to plink executable. If not set, script will assume plink is in the path.
 				(Optional)
 
+ --rscript			Set path to Rscript executable. If not set, script will assume Rscript is in the path.
+				(Optional)
+
 -h, --help			Display this help message.
 
 NOTE: Order of parameters does not matter.
@@ -76,9 +79,18 @@ if [[ $plink == "" ]]; then
 	echo ""
 fi
 
+Rscript=$(type -P Rscript) # this variable will be used to run R commands and should be modified with the --rscript flag if the executable is not in your $PATH
+if [[ $Rscript == "" ]]; then
+	echo ""
+	echo "WARNING: The Rscript executable is not in your path. You must set the location of Rscript with the --rscript flag."
+	echo ""
+fi
+
 code_directory=$(dirname $0) # supporting scripts must be in the same directory as this script
 find_complementary_flips="${code_directory}/find_complementary_flips.R"
 convert_reference="${code_directory}/convert_reference.sh"
+rename_variants="${code_directory}/rename_variants.R"
+plink2=/u/home/s/samlj/bin/plink2 # needed for removing duplicates by variant name
 
 #############################################################
 
@@ -102,6 +114,7 @@ for argument in $options ; do
 		-p|--hwe) hwe=$2; shift 2 ;;
 		-i|--mind) mind=$2; shift 2 ;;
 		--plink) plink=$2; shift 2 ;;
+		--rscript) rscript=$2; shift 2 ;;
 		-h|--help) echo "$usage_statement"; exit 0 ;;
 		--) shift ; break ;;
 		*) echo "ERROR: Argument parsing failed! Check getopt usage to see if it has changed." ; exit 1 ;;
@@ -116,7 +129,7 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 echo "RUNNING MERGE_AND_FILTER"
 echo "$(date)"
 echo "FROM $(pwd)"
-echo "WITH $plink"
+echo "WITH $plink AND $Rscript"
 echo "" # add space in output
 echo "$0 $@" # script call with parameters
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
@@ -377,195 +390,354 @@ do
 	echo "---------------------------------------------------------------------------------------------"
 	echo ""
 
+	echo "i. Generate reference files."
+	echo "..................................................................."
+	echo ""
+
 	batch_names=${dataset_name}_${build}_names_and_alleles.txt	
 
-	if [ ! -f ${batch_names} ]; then
-		echo "Reference file ${batch_names} has not yet been created."
-		echo "Generating a reference for all $(wc -l ${unique_name}.bim) SNPs genotyped in ${dataset_name} using reference file ${snp_names}."
-		echo ""
+	batch_snps=${dataset_name}_snps.txt
+	matching_snps="${dataset_name}_${build}_matching_snps.txt"
 
-		#batch_snps=${dataset_name}_snps.txt
-		#awk '{print $1"\t"$4"\t"$2"\t"$5"\t"$6}' ${unique_name}.bim > ${dataset_name}_snps.txt
+	if [ ! -f ${matching_snps} ]; then
+		echo "SNPs from ${unique_name}.bim have not yet been matched by position to SNPs in ${snp_names}."
+		echo "Generating list of matching SNPs for all $(wc -l ${unique_name}.bim) SNPs genotyped in ${dataset_name}."
+		awk '{print $1"\t"$4"\t"$2"\t"$5"\t"$6}' ${unique_name}.bim > ${batch_snps}
 		
-		#snp_positions=${dataset_name}_snp_positions.txt
-		#awk '{print $1"\t"$2"\t"}' $batch_snps > ${snp_positions}
+		snp_positions=${dataset_name}_snp_positions.txt
+		awk '{print $1"\t"$2"\t"}' $batch_snps > ${snp_positions}
 		
-		#matching_snps="${dataset_name}_${build}_matching_snps.txt"
-		#grep -F -f $snp_positions $snp_names > $matching_snps
-		#TODO: process matching snps and get correct names and alleles
+		grep -F -f $snp_positions $snp_names > $matching_snps
 	else
-		echo "Reference file ${batch_names} already exists. We will use this to rename all variants in ${dataset_name}."
+		echo "Matching SNPs for ${dataset_name} have already been generated from reference file ${snp_names}. Skipping this step for ${dataset_name}."
 	fi
 
 	echo ""
 
+	batch_names=${dataset_name}_${build}	
+	
+	if [ ! -f ${batch_names}_true_matches.txt ]; then
+		echo "Reference files with prefix ${batch_names} have not yet been created."
+		echo "Determining match types for all $(wc -l ${matching_snps}) variant matches found in ${matching_snps}."
+		echo ""
+
+		$Rscript $rename_variants $batch_snps $matching_snps ${dataset_name}_${build}
+				
+	else
+		echo "Reference files with prefix ${batch_names} already exist. We will use this to rename all variants in ${dataset_name}."
+	fi
+
+	echo ""
+
+	echo "ii. Remove variants with no matches."
+	echo "..................................................................."
+	echo ""
+	
+	no_match=${batch_names}_no_match.txt
+	no_match_output=${dataset_name}_with_matches
+
+	if [ ! -f ${no_match_output}.bed ]; then
+
+		echo "Removing $(wc -l $no_match) variants with no match in ${snp_names}:"
+		echo ""
+		$plink --bfile $unique_name --exclude $no_match --make-bed --out $no_match_output
+
+	else
+		echo "Plink file with variants with no matches removed ($no_match_output) already exists. Moving to next step."
+	fi
+
+	echo ""
+
+	echo "iii. Rename true matches."
+	echo "..................................................................."
+	echo ""
+	
+	true_match=${batch_names}_true_matches.txt
+	true_match_output=${dataset_name}_with_true_matches
+
+	if [ ! -f ${true_match_output}.bed ]; then
+		
+		echo "Renaming $(wc -l $true_match) variants with a perfect match in ${snp_names}."
+		echo ""
+
+		$plink --bfile $no_match_output --update-name $true_match  --make-bed --out $true_match_output
+
+	else
+		echo "Plink dataset with renamed true variants ($true_match_output) already exists. Moving to next step."
+
+	fi
+
+	echo ""
+
+	true_unduplicated=${true_match_output}_unduplicated
+	if [ ! -f ${true_unduplicated}.bed ]; then
+		echo "Checking for duplicated variant names caused by renaming."
+		$plink2 --bfile $true_match_output --rm-dup 'exclude-mismatch' --make-bed --out $true_unduplicated
+	fi
+
+	echo "iv. Assign alleles of flipped matches."
+	echo "..................................................................."
+	echo ""
+	
+	flipped_match=${batch_names}_flipped_matches.txt
+	flipped_match_output=${dataset_name}_with_flipped_matches
+
+	if [ ! -f ${flipped_match_output}.bed ]; then
+
+		allele_swapped_output=${dataset_name}_flipped
+
+		echo "Setting the A1 alleles of $(wc -l $flipped_match) variants with swapped reference and alternate alleles in ${snp_names}."
+		echo ""
+		$plink --bfile $true_unduplicated --a1-allele $flipped_match 3 1  --make-bed --out ${allele_swapped_output}
+		echo ""
+
+		echo "Renaming the flipped variants."
+		echo ""
+		$plink --bfile $allele_swapped_output --update-name $flipped_match  --make-bed --out $flipped_match_output
+	else
+		echo "Variants with flipped A1 and A2 alleles have already been flipped and renamed ($flipped_match_output). Moving on to next step."
+	fi
+
+	echo ""
+	
+	flipped_unduplicated=${flipped_match_output}_unduplicated
+        if [ ! -f ${flipped_unduplicated}.bed ]; then
+                echo "Checking for duplicated variant names caused by renaming."
+                $plink2 --bfile $flipped_match_output --rm-dup 'exclude-mismatch' --make-bed --out $flipped_unduplicated
+        fi
+
+	echo "v. Swap strand of complement matches."
+	echo "..................................................................."
+	echo ""
+
+	complement_match=${batch_names}_complement_matches.txt
+	complement_match_output=${dataset_name}_with_complement_matches
+
+	if [ ! -f ${complement_match_output}.bed ]; then
+		to_swap=${dataset_name}_to_swap.txt
+
+		awk '{print $1}' $complement_match > $to_swap
+
+		strand_swapped_output=${dataset_name}_strand_swapped
+
+		echo "Flipping the strand of $(wc -l $complement_match) variants with complementary alleles to a variant in ${snp_names}."
+		echo ""
+		$plink --bfile $flipped_unduplicated --flip $to_swap  --make-bed --out $strand_swapped_output
+		echo ""
+
+		echo "Renaming the strand swapped variants."
+		echo ""
+		$plink --bfile $strand_swapped_output --update-name $complement_match  --make-bed --out $complement_match_output 
+
+	else
+		echo "Variants with complementary alleles to those in the reference have already had their strand changed and been renamed ($complement_match_output). Moving on to next step."
+	fi
+
+	echo ""
+
+	complement_unduplicated=${complement_match_output}_unduplicated
+        if [ ! -f ${complement_unduplicated}.bed ]; then
+                echo "Checking for duplicated variant names caused by renaming."
+                $plink2 --bfile $complement_match_output --rm-dup 'exclude-mismatch' --make-bed --out $complement_unduplicated
+        fi
+
+	echo "vi. Swap strands and flip alleles of complement flipped matches."
+	echo "..................................................................."
+	echo ""
+
+	complement_flipped_match=${batch_names}_complement_flipped_matches.txt
 	final_name=${dataset_name}_final
 
-#	if [ ! -f ${final_name}.bed ]; then
-#		echo "Generating new variant names. Each variant will be assigned CHR:POSITION as its variant name to simplify merging."
-#		echo ""
-#		awk '{print $2"\t"$1":"$4}' ${unique_name}.bim > ${unique_name}_new_names.txt
-#
-#		echo "Renaming all variants."
-#		echo ""
-#
-#		$plink --bfile $unique_name --update-name ${unique_name}_new_names.txt --allow-no-sex --make-bed --out $final_name
-#	else
-#		echo " ${final_name} Plink files already exist in ${plink_output_directory}. Skipping variant renaming step for this dataset."
-#	fi
-#	echo ""
+	if [ ! -f ${final_name}.bed ]; then
+		
+		complement_to_swap=${dataset_name}_complement_to_swap.txt
+
+		awk '{print $1}' $complement_flipped_match > $complement_to_swap
+		
+		swapped_output=${dataset_name}_complement_swapped
+		
+		echo "Flipping the strand of $(wc -l $complement_flipped_match) variants with both allele swaps and strand switches in ${snp_names}."
+		echo ""
+		$plink --bfile $complement_unduplicated --flip $complement_to_swap  --make-bed --out $swapped_output
+		echo ""
+
+		flipped_output=${swapped_output}_flipped
+
+		echo "Setting the A1 alleles of variants with both allele swaps and strand switches in ${snp_names}."
+		echo ""
+		$plink --bfile $swapped_output --a1-allele $complement_flipped_match 3 1  --make-bed --out $flipped_output
+		echo ""
+
+		echo "Renaming flipped and strand swapped variants."
+		echo ""
+		$plink --bfile $flipped_output --update-name $complement_flipped_match  --make-bed --out $final_name
+
+	else
+		echo "${final_name} Plink files already exist in ${plink_output_directory}. Skipping variant renaming step for this dataset."
+	fi
+	echo ""
+
+	final_unduplicated=${final_name}_unduplicated
+        if [ ! -f ${final_unduplicated}.bed ]; then
+                echo "Checking for duplicated variant names caused by renaming."
+                $plink2 --bfile $final_name --rm-dup 'exclude-mismatch' --make-bed --out $final_unduplicated
+		cp ${final_unduplicated}.bed ${final_name}.bed
+		cp ${final_unduplicated}.bim ${final_name}.bed
+		cp ${final_unduplicated}.fam ${final_name}.fam
+        fi
+
 done
-#
+
 ##############################################################
-#
-#echo "#############################################################################################"
-#echo "STEP 5: Combine all datasets"
-#echo "#############################################################################################"
-#
-#echo ""
-#
-#number_datasets=${#dataset_names[@]}
-#
-#if [[ $number_datasets > 0 ]]; then
-#	combined=${dataset_names[0]}
-#	for (( index=1; index<=$number_datasets-1; index++)); 
-#	do
-#		dataset1=${combined}_final
-#		dataset2=${dataset_names[$index]}_final
-#		combined="${combined}_${dataset_names[$index]}"
-#		
-#		echo "----- combining" $dataset1 "and" $dataset2 "-----"
-#		echo "" 
-#
-#		# check if has been run before
-#		if [ ! -f ${combined}_final.bed ]; then
-#			echo "---------------------------------------------------------------------------------------------"
-#			echo "A) Try to merge"
-#			echo "---------------------------------------------------------------------------------------------"
-#			echo ""
-#
-#			$plink --bfile $dataset1 --bmerge $dataset2 --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_initial_merge # NOTE: can't use --merge-equal-pos option because it chooses whichever name is lexicographically first (in this case it will be the kgp ID from Illumina)
-#
-#			echo ""
-#
-#			if [ ! -f ${combined}_initial_merge-merge.missnp ]; then # no errors
-#				echo "No errors: combined Plink files copied to ${combined}_final."
-#				echo ""
-#
-#				cp ${combined}_initial_merge.bed ${combined}_final.bed
-#				cp ${combined}_initial_merge.bim ${combined}_final.bim
-#				cp ${combined}_initial_merge.fam ${combined}_final.fam	
-#			else
-#				echo "Strandedness errors likely."
-#				echo ""
-#				echo "---------------------------------------------------------------------------------------------"
-#				echo "B) Check for strandedness problems by flipping the strand of variants with tri-allelic errors and trying to merge again"
-#				echo "---------------------------------------------------------------------------------------------"
-#				echo ""
-#
-#				$plink --bfile $dataset1 --flip ${combined}_initial_merge-merge.missnp --allow-no-sex --make-bed --out ${dataset1}_initial_flip
-#				echo ""
-#
-#				$plink --bfile ${dataset1}_initial_flip --bmerge $dataset2 --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_initial_flip_merge
-#				echo ""
-#				
-#				if [ ! -f ${combined}_initial_flip_merge-merge.missnp ]; then # no tri-allelic variants
-#					triallelic=0
-#
-#					cp ${dataset1}_initial_flip.bed ${dataset1}_merge_ready.bed
-#					cp ${dataset1}_initial_flip.bim ${dataset1}_merge_ready.bim
-#					cp ${dataset1}_initial_flip.fam ${dataset1}_merge_ready.fam
-#					
-#					cp ${dataset2}.bed ${dataset2}_merge_ready.bed
-#					cp ${dataset2}.bim ${dataset2}_merge_ready.bim
-#					cp ${dataset2}.fam ${dataset2}_merge_ready.fam
-#						
-#					cp ${combined}_initial_flip_merge.bed ${combined}_merged.bed
-#					cp ${combined}_initial_flip_merge.bim ${combined}_merged.bim
-#					cp ${combined}_initial_flip_merge.fam ${combined}_merged.fam
-#				
-#				else
-#					triallelic=$(wc -l ${combined}_initial_flip_merge-merge.missnp | awk '{print $1}')
-#
-#					$plink --bfile ${dataset1}_initial_flip --exclude ${combined}_initial_flip_merge-merge.missnp --allow-no-sex --make-bed --out ${dataset1}_merge_ready
-#					echo ""
-#					
-#					$plink --bfile $dataset2 --exclude ${combined}_initial_flip_merge-merge.missnp --allow-no-sex --make-bed --out ${dataset2}_merge_ready
-#					echo ""
-#
-#					$plink --bfile ${dataset1}_merge_ready --bmerge ${dataset2}_merge_ready --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_merged
-#					echo ""
-#				fi
-#
-#				echo "True tri-allelic variants: $triallelic"
-#				echo ""
-#				
-#				echo "---------------------------------------------------------------------------------------------"
-#				echo "C) Check remaining A/T C/G strand inconsistencies"
-#				echo "---------------------------------------------------------------------------------------------"
-#				echo ""
-#
-#				merged_length=$(wc -l ${combined}_merged.fam | awk '{print $1}')
-#				dataset1_length=$(wc -l ${dataset1}_merge_ready.fam | awk '{print $1}')
-#
-#				echo "Merged length: $merged_length"
-#				echo "Dataset 1 length: $dataset1_length"
-#				echo ""
-#
-#				if (( $merged_length > $dataset1_length )); then
-#
-#					echo "Using LD to identify strand inconsistencies in A/T and C/G SNPs (with --flip-scan) that aren't caught during the merge."
-#					echo ""
-#
-#					$plink --bfile ${combined}_merged --update-parents $fake_founders --make-pheno ${dataset1}_merge_ready.fam '*' --flip-scan --out ${combined}_potential_remaining_problems
-#					echo ""
-#
-#					sed -i 's/NA *$/NA NA/g' ${combined}_potential_remaining_problems.flipscan # last column only exists if SNPs are in LD	
-#
-#					Rscript $find_complementary_flips ${combined}_potential_remaining_problems.flipscan 0.5 1 ${combined}_strandedness_problems.snplist
-#					remaining_problems=$(wc -l ${combined}_strandedness_problems.snplist | awk '{print $1}')
-#				else
-#					echo "WARNING: This merge didn't add any new people to the dataset, so we can't look for strand inconsistencies with --flip-scan."
-#					echo ""
-#					remaining_problems=0
-#				fi
-#
-#				echo "A/T C/G strand inconsistencies: $remaining_problems"
-#				echo ""
-#
-#				if [[ $remaining_problems != 0 ]]; then
-#					echo "Flipping remaining problems."
-#					echo ""				
-#					
-#					$plink --bfile ${dataset1}_merge_ready --flip ${combined}_strandedness_problems.snplist --allow-no-sex --make-bed --out ${dataset1}_merge_ready_final_flip
-#
-#					echo ""
-#					echo "Remerging with flipped SNPs."
-#					echo ""
-#
-#					# remerge
-#					$plink --bfile ${dataset1}_merge_ready_final_flip --bmerge ${dataset2}_merge_ready --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_final
-#
-#				else
-#					echo "No additional detected strand inconsistencies. Copying ${combined}_merged to ${combined}_final."
-#					echo ""
-#
-#					cp ${combined}_merged.bed ${combined}_final.bed
-#					cp ${combined}_merged.bim ${combined}_final.bim
-#					cp ${combined}_merged.fam ${combined}_final.fam	
-#				fi
-#			fi
-#			
-#		else
-#			echo "Plink files for the merge of ${dataset1} and ${dataset2} already exist. Skipping this run."
-#		fi
-#
-#		echo ""
-#	done	
-#fi
-#
-#############################################################
-#
+
+echo "#############################################################################################"
+echo "STEP 5: Combine all datasets"
+echo "#############################################################################################"
+
+echo ""
+
+number_datasets=${#dataset_names[@]}
+
+if [[ $number_datasets > 0 ]]; then
+	combined=${dataset_names[0]}
+	for (( index=1; index<=$number_datasets-1; index++)); 
+	do
+		dataset1=${combined}_final
+		dataset2=${dataset_names[$index]}_final
+		combined="${combined}_${dataset_names[$index]}"
+		
+		echo "----- combining" $dataset1 "and" $dataset2 "-----"
+		echo "" 
+
+		# check if has been run before
+		if [ ! -f ${combined}_final.bed ]; then
+			echo "---------------------------------------------------------------------------------------------"
+			echo "A) Try to merge"
+			echo "---------------------------------------------------------------------------------------------"
+			echo ""
+
+			$plink --bfile $dataset1 --bmerge $dataset2 --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_initial_merge # NOTE: can't use --merge-equal-pos option because it chooses whichever name is lexicographically first (in this case it will be the kgp ID from Illumina)
+
+			echo ""
+
+			if [ ! -f ${combined}_initial_merge-merge.missnp ]; then # no errors
+				echo "No errors: combined Plink files copied to ${combined}_final."
+				echo ""
+
+				cp ${combined}_initial_merge.bed ${combined}_final.bed
+				cp ${combined}_initial_merge.bim ${combined}_final.bim
+				cp ${combined}_initial_merge.fam ${combined}_final.fam	
+			else
+				echo "Strandedness errors likely."
+				echo ""
+				echo "---------------------------------------------------------------------------------------------"
+				echo "B) Check for strandedness problems by flipping the strand of variants with tri-allelic errors and trying to merge again"
+				echo "---------------------------------------------------------------------------------------------"
+				echo ""
+
+				$plink --bfile $dataset1 --flip ${combined}_initial_merge-merge.missnp --allow-no-sex --make-bed --out ${dataset1}_initial_flip
+				echo ""
+
+				$plink --bfile ${dataset1}_initial_flip --bmerge $dataset2 --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_initial_flip_merge
+				echo ""
+				
+				if [ ! -f ${combined}_initial_flip_merge-merge.missnp ]; then # no tri-allelic variants
+					triallelic=0
+
+					cp ${dataset1}_initial_flip.bed ${dataset1}_merge_ready.bed
+					cp ${dataset1}_initial_flip.bim ${dataset1}_merge_ready.bim
+					cp ${dataset1}_initial_flip.fam ${dataset1}_merge_ready.fam
+					
+					cp ${dataset2}.bed ${dataset2}_merge_ready.bed
+					cp ${dataset2}.bim ${dataset2}_merge_ready.bim
+					cp ${dataset2}.fam ${dataset2}_merge_ready.fam
+						
+					cp ${combined}_initial_flip_merge.bed ${combined}_merged.bed
+					cp ${combined}_initial_flip_merge.bim ${combined}_merged.bim
+					cp ${combined}_initial_flip_merge.fam ${combined}_merged.fam
+				
+				else
+					triallelic=$(wc -l ${combined}_initial_flip_merge-merge.missnp | awk '{print $1}')
+
+					$plink --bfile ${dataset1}_initial_flip --exclude ${combined}_initial_flip_merge-merge.missnp --allow-no-sex --make-bed --out ${dataset1}_merge_ready
+					echo ""
+					
+					$plink --bfile $dataset2 --exclude ${combined}_initial_flip_merge-merge.missnp --allow-no-sex --make-bed --out ${dataset2}_merge_ready
+					echo ""
+
+					$plink --bfile ${dataset1}_merge_ready --bmerge ${dataset2}_merge_ready --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_merged
+					echo ""
+				fi
+
+				echo "True tri-allelic variants: $triallelic"
+				echo ""
+				
+				echo "---------------------------------------------------------------------------------------------"
+				echo "C) Check remaining A/T C/G strand inconsistencies"
+				echo "---------------------------------------------------------------------------------------------"
+				echo ""
+
+				merged_length=$(wc -l ${combined}_merged.fam | awk '{print $1}')
+				dataset1_length=$(wc -l ${dataset1}_merge_ready.fam | awk '{print $1}')
+
+				echo "Merged length: $merged_length"
+				echo "Dataset 1 length: $dataset1_length"
+				echo ""
+
+				if (( $merged_length > $dataset1_length )); then
+
+					echo "Using LD to identify strand inconsistencies in A/T and C/G SNPs (with --flip-scan) that aren't caught during the merge."
+					echo ""
+
+					$plink --bfile ${combined}_merged --update-parents $fake_founders --make-pheno ${dataset1}_merge_ready.fam '*' --flip-scan --out ${combined}_potential_remaining_problems
+					echo ""
+
+					sed -i 's/NA *$/NA NA/g' ${combined}_potential_remaining_problems.flipscan # last column only exists if SNPs are in LD	
+
+					$Rscript $find_complementary_flips ${combined}_potential_remaining_problems.flipscan 0.5 1 ${combined}_strandedness_problems.snplist
+					remaining_problems=$(wc -l ${combined}_strandedness_problems.snplist | awk '{print $1}')
+				else
+					echo "WARNING: This merge didn't add any new people to the dataset, so we can't look for strand inconsistencies with --flip-scan."
+					echo ""
+					remaining_problems=0
+				fi
+
+				echo "A/T C/G strand inconsistencies: $remaining_problems"
+				echo ""
+
+				if [[ $remaining_problems != 0 ]]; then
+					echo "Flipping remaining problems."
+					echo ""				
+					
+					$plink --bfile ${dataset1}_merge_ready --flip ${combined}_strandedness_problems.snplist --allow-no-sex --make-bed --out ${dataset1}_merge_ready_final_flip
+
+					echo ""
+					echo "Remerging with flipped SNPs."
+					echo ""
+
+					# remerge
+					$plink --bfile ${dataset1}_merge_ready_final_flip --bmerge ${dataset2}_merge_ready --merge-mode 2 --allow-no-sex --make-bed --out ${combined}_final
+
+				else
+					echo "No additional detected strand inconsistencies. Copying ${combined}_merged to ${combined}_final."
+					echo ""
+
+					cp ${combined}_merged.bed ${combined}_final.bed
+					cp ${combined}_merged.bim ${combined}_final.bim
+					cp ${combined}_merged.fam ${combined}_final.fam	
+				fi
+			fi
+			
+		else
+			echo "Plink files for the merge of ${dataset1} and ${dataset2} already exist. Skipping this run."
+		fi
+
+		echo ""
+	done	
+fi
+
+############################################################
+
 #echo "#############################################################################################"
 #echo "STEP 6: Get new variant names"
 #echo "#############################################################################################"
